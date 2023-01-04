@@ -1,23 +1,27 @@
 // SPDX-License-Identifier: Apache-2.0
 pragma solidity ^0.8.0;
 
-import {MerkleProof} from "@openzeppelin/contracts/utils/cryptography/MerkleProof.sol";
+import "@openzeppelin/contracts/utils/cryptography/MerkleProof.sol";
 import "@openzeppelin/contracts/access/Ownable.sol";
 import "@openzeppelin/contracts/security/ReentrancyGuard.sol";
+import "@openzeppelin/contracts/utils/Strings.sol";
 import "./erc721a/ERC721A.sol";
 
 contract rektNFT is ERC721A, Ownable, ReentrancyGuard {
-    bytes32 public merkleRoot;
+    using Strings for uint256;
+
+    bytes32 public merkleRoot = "";
     mapping(address => bool) public whitelistClaimed;
 
+    string public baseURI;
     uint256 public maxSupply = 2023;
-    uint256 public currentSuply = 0;
+    uint256 public currentSupply = 0;
     uint8 public maxMintAmount = 1;
     bool public publicSaleActive = false;
     bool public whitelistSaleActive = false;
 
-    address internal withdrawAddress;
-    mapping(uint256 => string) public tokenIdToURI;
+    address public withdrawAddress;
+    //mapping(uint256 => string) public tokenIdToURI;
 
     address[] public admins;
     mapping(address => bool) public ownerByAddress;
@@ -26,12 +30,9 @@ contract rektNFT is ERC721A, Ownable, ReentrancyGuard {
     // @author The name of the author is @dsborde
     // @notice Constructor sets the base parameters for constructors
     // @dev Since its ERC721A we need to use _msgSender()
-    constructor(
-        string memory _name,
-        string memory _symbol,
-        bytes32 _merkleRoot
-    ) ERC721A(_name, _symbol) {
-        merkleRoot = _merkleRoot;
+    constructor(string memory _name, string memory _symbol)
+        ERC721A(_name, _symbol)
+    {
         admins.push(msg.sender);
         ownerByAddress[msg.sender] = true;
     }
@@ -49,55 +50,74 @@ contract rektNFT is ERC721A, Ownable, ReentrancyGuard {
         _;
     }
 
-    function reserve(uint256 _mintNum) external onlyOwner {
-        uint256 supply = totalSupply();
-        require(supply + _mintNum <= maxSupply, "Supply Limit Reached");
-        _safeMint(msg.sender, _mintNum);
-    }
-
-    function getNFT(bytes32[] calldata _merkleProof, string memory _tokenUri)
-        public
-        payable
+    function getNFTWhiteList(bytes32[] memory _merkleProof)
+        external
         callerIsUser
     {
         require(whitelistSaleActive || publicSaleActive, "Not ready for sale");
-        require(currentSuply + 1 <= maxSupply, "Supply Limit Reached");
+        require(currentSupply + 1 <= maxSupply, "Supply Limit Reached");
         require(
             balanceOf(msg.sender) < maxMintAmount,
             "Max NFT mint Limit reached"
         );
 
-        if (whitelistSaleActive) {
-            require(
-                !whitelistClaimed[msg.sender],
-                "whiteList slot has already been claimed."
-            );
+        require(
+            !whitelistClaimed[msg.sender],
+            "whiteList slot has already been claimed."
+        );
 
-            bytes32 leaf = keccak256(abi.encodePacked(_msgSender()));
-            require(
-                MerkleProof.verify(_merkleProof, merkleRoot, leaf),
-                "Invalid proof!"
-            );
-            whitelistClaimed[msg.sender] = true;
-            _safeMint(msg.sender, 1);
-            tokenIdToURI[_tokenId] = _tokenURI;
-            currentSuply++;
-        } else if (publicSaleActive) {
-            _safeMint(msg.sender, 1);
-            tokenIdToURI[_tokenId] = _tokenURI;
-            currentSuply++;
-        }
+        bytes32 leaf = keccak256(abi.encodePacked(_msgSender()));
+        require(
+            MerkleProof.verify(_merkleProof, merkleRoot, leaf),
+            "Invalid proof!"
+        );
+        whitelistClaimed[msg.sender] = true;
+        _safeMint(msg.sender, 1);
+
+        currentSupply++;
     }
 
-    function tokenURI(uint256 _tokenId)
+    function mintPublicSale() external callerIsUser {
+        require(whitelistSaleActive || publicSaleActive, "Not ready for sale");
+        require(currentSupply + 1 <= maxSupply, "Supply Limit Reached");
+        require(
+            balanceOf(msg.sender) < maxMintAmount,
+            "Max NFT mint Limit reached"
+        );
+
+        _safeMint(msg.sender, 1);
+        currentSupply++;
+    }
+
+    function tokenURI(uint256 tokenId)
         public
         view
         virtual
         override
         returns (string memory)
     {
-        require(_exists(_tokenId), "Non Existent Token");
-        return tokenIdToURI[_tokenId];
+        require(_exists(tokenId), "Non Existent Token");
+        string memory currentBaseURI = _baseURI();
+
+        return (
+            bytes(currentBaseURI).length > 0
+                ? string(
+                    abi.encodePacked(
+                        currentBaseURI,
+                        tokenId.toString(),
+                        ".json"
+                    )
+                )
+                : ""
+        );
+    }
+
+    function setBaseURI(string memory _newBaseURI) public onlyAdmins {
+        baseURI = _newBaseURI;
+    }
+
+    function _baseURI() internal view virtual override returns (string memory) {
+        return baseURI;
     }
 
     function withdrawAll() external onlyOwner nonReentrant {
@@ -107,16 +127,16 @@ contract rektNFT is ERC721A, Ownable, ReentrancyGuard {
         require(success, "Failed to Send Ether");
     }
 
-    function setURIforTokenId(uint64 _tokenId, string memory _tokenURI)
-        external
-        onlyAdmins
-    {
-        require(
-            bytes(tokenIdToURI[_tokenId]).length > 0,
-            "Token URI already set for tokenId"
-        );
-        tokenIdToURI[_tokenId] = _tokenURI;
-    }
+    // function setURIforTokenId(uint64 _tokenId, string memory _tokenURI)
+    //     external
+    //     onlyAdmins
+    // {
+    //     require(
+    //         bytes(tokenIdToURI[_tokenId]).length > 0,
+    //         "Token URI already set for tokenId"
+    //     );
+    //     tokenIdToURI[_tokenId] = _tokenURI;
+    // }
 
     function _startTokenId() internal view virtual override returns (uint256) {
         return 1;
